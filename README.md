@@ -6,4 +6,8 @@ That in turn makes it difficult to use efficiently with partitioning.
 
 Implementing proper SAOP support requires patching core PostgreSQL.
 But it is possible (and actually quite easy) to provide additional operators to support required functionality.
-This extension initially provides `=|| (text, text[])` operator that can be used in place of `ANY = (text[])`.
+This extension initially provides `=|| (text, text[])` operator that can be used in place of `ANY = (text[])`:
+
+```
+SELECT * FROM tbl WHERE col =|| ARRAY['text1', 'text2', 'text3']
+```

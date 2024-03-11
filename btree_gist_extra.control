@@ -1,0 +1,5 @@
+default_version = '1.0.0'
+module_pathname = '$libdir/btree_gist_extra'
+relocatable = true
+trusted = true
+requires = 'btree_gist'

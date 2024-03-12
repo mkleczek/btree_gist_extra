@@ -35,7 +35,7 @@ Datum gbte_text_any_eq_array(PG_FUNCTION_ARGS)
 Datum gbte_text_all_eq_array(PG_FUNCTION_ARGS)
 {
     Datum elem = PG_GETARG_DATUM(0);
-    ArrayType *arrayval = DatumGetArrayTypeP(PG_GETARG_DATUM(1));
+    ArrayType *arrayval = PG_GETARG_ARRAYTYPE_P(1);
 
     return check_all(elem, arrayval, PG_GET_COLLATION(), texteq);
 }
@@ -47,8 +47,7 @@ Datum gbte_text_consistent(PG_FUNCTION_ARGS)
 
 Datum find_any(Datum elem, ArrayType *array, Oid colation, PGFunction compare)
 {
-    ArrayMetaState ams;
-    ArrayIterator it = array_create_iterator(array, 0, &ams);
+    ArrayIterator it = array_create_iterator(array, 0, NULL);
     Datum next_array_elem;
     bool is_null;
     bool found = false;
@@ -64,8 +63,7 @@ Datum find_any(Datum elem, ArrayType *array, Oid colation, PGFunction compare)
 }
 Datum check_all(Datum elem, ArrayType *array, Oid colation, PGFunction compare)
 {
-    ArrayMetaState ams;
-    ArrayIterator it = array_create_iterator(array, 0, &ams);
+    ArrayIterator it = array_create_iterator(array, 0, NULL);
     Datum next_array_elem;
     bool is_null;
     bool found = true;
@@ -81,8 +79,7 @@ Datum check_all(Datum elem, ArrayType *array, Oid colation, PGFunction compare)
 }
 Datum any_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy)
 {
-    ArrayMetaState ams;
-    ArrayIterator it = array_create_iterator(DatumGetArrayTypeP(PG_GETARG_DATUM(1)), 0, &ams);
+    ArrayIterator it = array_create_iterator(DatumGetArrayTypeP(PG_GETARG_DATUM(1)), 0, NULL);
     Datum next_array_elem;
     bool is_null;
     bool found = false;
@@ -106,8 +103,7 @@ Datum any_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int elemen
 
 Datum all_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy)
 {
-    ArrayMetaState ams;
-    ArrayIterator it = array_create_iterator(DatumGetArrayTypeP(PG_GETARG_DATUM(1)), 0, &ams);
+    ArrayIterator it = array_create_iterator(DatumGetArrayTypeP(PG_GETARG_DATUM(1)), 0, NULL);
     Datum next_array_elem;
     bool is_null;
     bool found = true;

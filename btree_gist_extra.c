@@ -12,22 +12,118 @@ PG_FUNCTION_INFO_V1(gbt_extra_text_consistent);
 
 PG_FUNCTION_INFO_V1(gbt_text_consistent);
 
-#define BtreeGistExtraInArrayStrategyNumber RTContainsStrategyNumber
+#define GbtExtraAnyEqStrategyNumber RTContainsStrategyNumber
+#define GbtExtraAllEqStrategyNumber (GbtExtraAnyEqStrategyNumber + 1)
 
-PG_FUNCTION_INFO_V1(gbt_extra_text_in_array);
+static Datum find_any(Datum elem, ArrayType* array, Oid colation, PGFunction compare);
+static Datum check_all(Datum elem, ArrayType* array, Oid colation, PGFunction compare);
+static Datum any_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy);
+static Datum all_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy);
+static Datum array_consisten(PG_FUNCTION_ARGS, PGFunction element_consistent);
+
+
+PG_FUNCTION_INFO_V1(gbt_extra_text_any_eq_array);
 Datum
-gbt_extra_text_in_array(PG_FUNCTION_ARGS)
+gbt_extra_text_any_eq_array(PG_FUNCTION_ARGS)
 {
     Datum            elem = PG_GETARG_DATUM(0);
     ArrayType       *arrayval = DatumGetArrayTypeP(PG_GETARG_DATUM(1));
+
+    return find_any(elem, arrayval, PG_GET_COLLATION(), texteq);
+}
+
+PG_FUNCTION_INFO_V1(gbt_extra_text_all_eq_array);
+Datum
+gbt_extra_text_all_eq_array(PG_FUNCTION_ARGS)
+{
+    Datum            elem = PG_GETARG_DATUM(0);
+    ArrayType       *arrayval = DatumGetArrayTypeP(PG_GETARG_DATUM(1));
+
+    return check_all(elem, arrayval, PG_GET_COLLATION(), texteq);
+}
+
+Datum
+gbt_extra_text_consistent(PG_FUNCTION_ARGS)
+{
+    return array_consisten(fcinfo, gbt_text_consistent);
+}
+
+Datum find_any(Datum elem, ArrayType* array, Oid colation, PGFunction compare)
+{
     ArrayMetaState   ams;
-    ArrayIterator    it = array_create_iterator(arrayval, 0, &ams);
+    ArrayIterator    it = array_create_iterator(array, 0, &ams);
     Datum            next_array_elem;
     bool             is_null;
     bool             found = false;
 
-    while (!found && array_iterate(it, &next_array_elem, &is_null)) {
-        found = !is_null && DatumGetBool(DirectFunctionCall2Coll(texteq, PG_GET_COLLATION(), next_array_elem, elem));
+    while (!found && array_iterate(it, &next_array_elem, &is_null))
+    {
+        found = !is_null && DatumGetBool(DirectFunctionCall2Coll(compare, colation, next_array_elem, elem));
+    }
+
+    array_free_iterator(it);
+
+    PG_RETURN_BOOL(found);
+}
+Datum check_all(Datum elem, ArrayType* array, Oid colation, PGFunction compare)
+{
+    ArrayMetaState   ams;
+    ArrayIterator    it = array_create_iterator(array, 0, &ams);
+    Datum            next_array_elem;
+    bool             is_null;
+    bool             found = true;
+
+    while (found && array_iterate(it, &next_array_elem, &is_null))
+    {
+        found = !is_null && DatumGetBool(DirectFunctionCall2Coll(compare, colation, next_array_elem, elem));
+    }
+
+    array_free_iterator(it);
+
+    PG_RETURN_BOOL(found);
+}
+Datum any_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy)
+{
+    ArrayMetaState   ams;
+    ArrayIterator    it = array_create_iterator(DatumGetArrayTypeP(PG_GETARG_DATUM(1)), 0, &ams);
+    Datum            next_array_elem;
+    bool             is_null;
+    bool             found = false;
+
+    while (!found && array_iterate(it, &next_array_elem, &is_null))
+    {
+        found = !is_null && DatumGetBool(DirectFunctionCall5Coll(
+                element_consistent,
+                PG_GET_COLLATION(),
+                PG_GETARG_DATUM(0),
+                next_array_elem,
+                element_strategy,
+                PG_GETARG_DATUM(3),
+                PG_GETARG_DATUM(4)));
+    }
+
+    array_free_iterator(it);
+
+    PG_RETURN_BOOL(found);
+}
+Datum all_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy)
+{
+    ArrayMetaState   ams;
+    ArrayIterator    it = array_create_iterator(DatumGetArrayTypeP(PG_GETARG_DATUM(1)), 0, &ams);
+    Datum            next_array_elem;
+    bool             is_null;
+    bool             found = true;
+
+    while (found && array_iterate(it, &next_array_elem, &is_null))
+    {
+        found = !is_null && DatumGetBool(DirectFunctionCall5Coll(
+                element_consistent,
+                PG_GET_COLLATION(),
+                PG_GETARG_DATUM(0),
+                next_array_elem,
+                element_strategy,
+                PG_GETARG_DATUM(3),
+                PG_GETARG_DATUM(4)));
     }
 
     array_free_iterator(it);
@@ -35,62 +131,19 @@ gbt_extra_text_in_array(PG_FUNCTION_ARGS)
     PG_RETURN_BOOL(found);
 }
 
-Datum
-gbt_extra_text_consistent(PG_FUNCTION_ARGS)
+Datum array_consisten(PG_FUNCTION_ARGS, PGFunction element_consistent)
 {
 	StrategyNumber strategy = (StrategyNumber) PG_GETARG_UINT16(2);
-    if (strategy != BtreeGistExtraInArrayStrategyNumber)
+    switch (strategy)
     {
+    case GbtExtraAnyEqStrategyNumber:
+        return any_consistent(fcinfo, element_consistent, BTEqualStrategyNumber);
+    case GbtExtraAllEqStrategyNumber:
+        return all_consistent(fcinfo, element_consistent, BTEqualStrategyNumber);
+    default:
         /*
          * Do not bother to use any DirectFunctionCall macros
          */
-        return gbt_text_consistent(fcinfo);
+        return element_consistent(fcinfo);
     }
-
-	Datum       query = PG_GETARG_DATUM(1);
-	bool		retval = false;
-
-    ArrayType  *arrayval;
-    int16		elmlen;
-    bool		elmbyval;
-    char		elmalign;
-    int			num_elems;
-    Datum	   *elem_values;
-    bool	   *elem_nulls;
-    int			j;
-
-    /*
-    * First, deconstruct the array into elements.  Anything allocated
-    * here (including a possibly detoasted array value) is in the
-    * workspace context.
-    */
-    arrayval = DatumGetArrayTypeP(query);
-    /* We could cache this data, but not clear it's worth it */
-    get_typlenbyvalalign(ARR_ELEMTYPE(arrayval), &elmlen, &elmbyval, &elmalign);
-    deconstruct_array(arrayval, ARR_ELEMTYPE(arrayval), elmlen, elmbyval, elmalign, &elem_values, &elem_nulls, &num_elems);
-
-
-    for (j = 0; j < num_elems; j++)
-    {
-        if (!elem_nulls[j])
-        {
-            /*
-             * Call delegate consistent function for each element in the array
-             * short circuiting if it returns true
-             */
-            retval = DatumGetBool(DirectFunctionCall5Coll(
-                gbt_text_consistent,
-                PG_GET_COLLATION(),
-                PG_GETARG_DATUM(0),
-                elem_values[j],
-                BTEqualStrategyNumber,
-                PG_GETARG_DATUM(3),
-                PG_GETARG_DATUM(4)));
-            if (retval) {
-                break;
-            }
-        }
-    }
-
-	PG_RETURN_BOOL(retval);
 }

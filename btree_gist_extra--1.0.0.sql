@@ -3,20 +3,20 @@
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
 \echo Use "CREATE EXTENSION btree_gist_extra" to load this file. \quit
 
--- CREATE OR REPLACE FUNCTION gbt_extra_text_in_array(text, text[]) RETURNS boolean IMMUTABLE LANGUAGE sql AS
+-- CREATE OR REPLACE FUNCTION gbte_text_in_array(text, text[]) RETURNS boolean IMMUTABLE LANGUAGE sql AS
 -- $$SELECT $1 = ANY ($2)$$;
 
-CREATE FUNCTION gbt_extra_text_any_eq_array(text, text[])
+CREATE FUNCTION gbte_text_any_eq_array(text, text[])
 RETURNS bool
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
-CREATE FUNCTION gbt_extra_text_all_eq_array(text, text[])
+CREATE FUNCTION gbte_text_all_eq_array(text, text[])
 RETURNS bool
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
-CREATE FUNCTION gbt_extra_text_consistent(internal,anyelement,int2,oid,internal)
+CREATE FUNCTION gbte_text_consistent(internal,anyelement,int2,oid,internal)
 RETURNS bool
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
@@ -24,13 +24,13 @@ LANGUAGE C IMMUTABLE STRICT;
 CREATE OPERATOR ||= (
 	LEFTARG = text,
 	RIGHTARG = text[],
-	PROCEDURE = gbt_extra_text_any_eq_array
+	PROCEDURE = gbte_text_any_eq_array
 );
 
 CREATE OPERATOR &&= (
 	LEFTARG = text,
 	RIGHTARG = text[],
-	PROCEDURE = gbt_extra_text_all_eq_array
+	PROCEDURE = gbte_text_all_eq_array
 );
 
 -- Create the operator class
@@ -42,7 +42,7 @@ AS
 	OPERATOR	3	=  ,
 	OPERATOR	4	>= ,
 	OPERATOR	5	>  ,
-	FUNCTION	1	gbt_extra_text_consistent (internal, anyelement, int2, oid, internal),
+	FUNCTION	1	gbte_text_consistent (internal, anyelement, int2, oid, internal),
 	FUNCTION	2	gbt_text_union (internal, internal),
 	FUNCTION	3	gbt_text_compress (internal),
 	FUNCTION	4	gbt_var_decompress (internal),

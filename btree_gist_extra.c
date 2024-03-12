@@ -8,10 +8,10 @@
 
 PG_MODULE_MAGIC;
 
-PG_FUNCTION_INFO_V1(gbt_extra_text_any_eq_array);
-PG_FUNCTION_INFO_V1(gbt_extra_text_all_eq_array);
+PG_FUNCTION_INFO_V1(gbte_text_any_eq_array);
+PG_FUNCTION_INFO_V1(gbte_text_all_eq_array);
 
-PG_FUNCTION_INFO_V1(gbt_extra_text_consistent);
+PG_FUNCTION_INFO_V1(gbte_text_consistent);
 
 Datum gbt_text_consistent(PG_FUNCTION_ARGS);
 
@@ -24,7 +24,7 @@ static Datum any_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int
 static Datum all_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy);
 static Datum array_consisten(PG_FUNCTION_ARGS, PGFunction element_consistent);
 
-Datum gbt_extra_text_any_eq_array(PG_FUNCTION_ARGS)
+Datum gbte_text_any_eq_array(PG_FUNCTION_ARGS)
 {
     Datum elem = PG_GETARG_DATUM(0);
     ArrayType *arrayval = DatumGetArrayTypeP(PG_GETARG_DATUM(1));
@@ -32,7 +32,7 @@ Datum gbt_extra_text_any_eq_array(PG_FUNCTION_ARGS)
     return find_any(elem, arrayval, PG_GET_COLLATION(), texteq);
 }
 
-Datum gbt_extra_text_all_eq_array(PG_FUNCTION_ARGS)
+Datum gbte_text_all_eq_array(PG_FUNCTION_ARGS)
 {
     Datum elem = PG_GETARG_DATUM(0);
     ArrayType *arrayval = DatumGetArrayTypeP(PG_GETARG_DATUM(1));
@@ -40,7 +40,7 @@ Datum gbt_extra_text_all_eq_array(PG_FUNCTION_ARGS)
     return check_all(elem, arrayval, PG_GET_COLLATION(), texteq);
 }
 
-Datum gbt_extra_text_consistent(PG_FUNCTION_ARGS)
+Datum gbte_text_consistent(PG_FUNCTION_ARGS)
 {
     return array_consisten(fcinfo, gbt_text_consistent);
 }

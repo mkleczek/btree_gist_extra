@@ -8,9 +8,10 @@
 
 PG_MODULE_MAGIC;
 
-PG_FUNCTION_INFO_V1(gbt_extra_text_consistent);
 PG_FUNCTION_INFO_V1(gbt_extra_text_any_eq_array);
 PG_FUNCTION_INFO_V1(gbt_extra_text_all_eq_array);
+
+PG_FUNCTION_INFO_V1(gbt_extra_text_consistent);
 
 Datum gbt_text_consistent(PG_FUNCTION_ARGS);
 

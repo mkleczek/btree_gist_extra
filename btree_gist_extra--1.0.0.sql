@@ -6,21 +6,32 @@
 -- CREATE OR REPLACE FUNCTION gbt_extra_text_in_array(text, text[]) RETURNS boolean IMMUTABLE LANGUAGE sql AS
 -- $$SELECT $1 = ANY ($2)$$;
 
-CREATE FUNCTION gbt_extra_text_in_array(text, text[])
+CREATE FUNCTION gbt_extra_text_any_eq_array(text, text[])
 RETURNS bool
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
-CREATE OPERATOR =|| (
-	LEFTARG = text,
-	RIGHTARG = text[],
-	PROCEDURE = gbt_extra_text_in_array
-);
+CREATE FUNCTION gbt_extra_text_all_eq_array(text, text[])
+RETURNS bool
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
 
 CREATE FUNCTION gbt_extra_text_consistent(internal,anyelement,int2,oid,internal)
 RETURNS bool
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OPERATOR ||= (
+	LEFTARG = text,
+	RIGHTARG = text[],
+	PROCEDURE = gbt_extra_text_any_eq_array
+);
+
+CREATE OPERATOR &&= (
+	LEFTARG = text,
+	RIGHTARG = text[],
+	PROCEDURE = gbt_extra_text_all_eq_array
+);
 
 -- Create the operator class
 CREATE OPERATOR CLASS gist_extra_text_ops
@@ -42,5 +53,6 @@ AS
 
 ALTER OPERATOR FAMILY gist_extra_text_ops USING gist ADD
 	OPERATOR	6	<> (text, text) ,
-	OPERATOR	7	=|| (text, text[]) ,
+	OPERATOR	7	||= (text, text[]) ,
+	OPERATOR	8	&&= (text, text[]) ,
 	FUNCTION	9 (text, text) gbt_var_fetch (internal) ;

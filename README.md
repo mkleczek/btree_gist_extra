@@ -19,3 +19,9 @@ SELECT * FROM tbl WHERE col ||= ARRAY['text1', 'text2', 'text3']
 ```
 SELECT * FROM tbl WHERE col &&= ARRAY['text1', 'text2', 'text3']
 ```
+# Usage in GiST indexes
+```
+CREATE INDEX ind ON tbl USING gist (
+  text_column gist_extra_text_ops
+);
+```

@@ -13,4 +13,5 @@ PG_LDFLAGS += -L$(shell $(PG_CONFIG) --pkglibdir) #-lbtree_gist
 include $(PGXS)
 ifeq ($(PORTNAME), darwin)
 override CFLAGS += -undefined dynamic_lookup
+#override LDFLAGS += -dylib_file libbtree_gist.dylib:btree_gist.dylib
 endif

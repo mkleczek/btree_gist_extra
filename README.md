@@ -8,7 +8,7 @@ Implementing proper SAOP support requires patching core PostgreSQL.
 But it is possible (and actually quite easy) to provide additional operators to support required functionality.
 This extension initially provides the following operators (naming based on `||` and `&&` operators from C-like languages):
 ### Any equals
-``||= (text, text[])` operator that can be used in place of `ANY = (text[])`:
+`||= (text, text[])` operator that can be used in place of `ANY = (text[])`:
 
 ```
 SELECT * FROM tbl WHERE col ||= ARRAY['text1', 'text2', 'text3']

@@ -21,6 +21,12 @@ RETURNS bool
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
+CREATE FUNCTION gbte_options(internal)
+RETURNS void
+AS 'MODULE_PATHNAME', 'gbte_options'
+LANGUAGE C IMMUTABLE PARALLEL SAFE;
+
+
 CREATE OPERATOR ||= (
 	LEFTARG = text,
 	RIGHTARG = text[],
@@ -52,7 +58,8 @@ AS
 	STORAGE			gbtreekey_var;
 
 ALTER OPERATOR FAMILY gist_extra_text_ops USING gist ADD
-	OPERATOR	6	<> (text, text) ,
-	OPERATOR	7	||= (text, text[]) ,
-	OPERATOR	8	&&= (text, text[]) ,
-	FUNCTION	9 (text, text) gbt_var_fetch (internal) ;
+	OPERATOR	6	<> (text, text),
+	OPERATOR	7	||= (text, text[]),
+	OPERATOR	8	&&= (text, text[]),
+	FUNCTION	9 (text, text) gbt_var_fetch (internal),
+	FUNCTION	10 (text) gbte_options (internal);

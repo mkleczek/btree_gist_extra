@@ -7,9 +7,9 @@ OBJS += btree_gist_extra.o
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
-PG_LDFLAGS += -L$(shell $(PG_CONFIG) --pkglibdir) #-lbtree_gist
+PG_LDFLAGS += -L$(shell $(PG_CONFIG) --pkglibdir) -l:btree_gist.so
 #PG_LIBS += btree_gist
-#SHLIB_LINK += btree_gist.dylib
+#SHLIB_LINK += btree_gist.so
 include $(PGXS)
 ifeq ($(PORTNAME), darwin)
 override CFLAGS += -undefined dynamic_lookup

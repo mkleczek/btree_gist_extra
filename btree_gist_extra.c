@@ -137,13 +137,15 @@ Datum check_all(Datum elem, ArrayType *array, Oid colation, PGFunction compare)
 Datum any_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy)
 {
     ArrayIterator it = array_create_iterator(DatumGetArrayTypeP(PG_GETARG_DATUM(1)), 0, NULL);
+    bool* recheck = (bool *) PG_GETARG_POINTER(4);
     Datum next_array_elem;
     bool is_null;
     bool found = false;
 
-    while (!found && array_iterate(it, &next_array_elem, &is_null))
+    *recheck = false;
+    while ((!found || *recheck) && array_iterate(it, &next_array_elem, &is_null))
     {
-        found = !is_null && DatumGetBool(CallerFInfoFunctionCall5(
+        found = (!is_null && DatumGetBool(CallerFInfoFunctionCall5(
                                 element_consistent,
                                 fcinfo->flinfo,
                                 PG_GET_COLLATION(),
@@ -151,7 +153,7 @@ Datum any_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int elemen
                                 next_array_elem,
                                 element_strategy,
                                 PG_GETARG_DATUM(3),
-                                PG_GETARG_DATUM(4)));
+                                PG_GETARG_DATUM(4)))) || found;
     }
 
     array_free_iterator(it);
@@ -294,7 +296,7 @@ static struct cached_part_info *get_part_bounds_info(FmgrInfo *flinfo, Relation 
               (var = func(&var##__state.l->elements[var##__state.i]), true)); \
              var##__state.i++)
 
-static bool value_part_bounds_consistent(FmgrInfo *flinfo, Relation index_rel, AttrNumber index_att_no, Datum value)
+static bool value_part_bounds_consistent(FmgrInfo *flinfo, Relation index_rel, AttrNumber index_att_no, Datum value, bool* recheck)
 {
     if (index_att_no > 0)
     {
@@ -318,6 +320,7 @@ static bool value_part_bounds_consistent(FmgrInfo *flinfo, Relation index_rel, A
             idx = boundinfo->indexes[hash % boundinfo->nindexes];
             if (idx >= 0 && part_info->part_desc->oids[idx] != part_info->expected_part_oid)
             {
+                *recheck = false;
                 /* The value is in another partition so we can safely exclude it */
                 return false;
             }
@@ -341,7 +344,8 @@ Datum text_consistent_and_matches_part_bounds(PG_FUNCTION_ARGS)
                 fcinfo->flinfo,
                 entry->rel,
                 options->attno,
-                PG_GETARG_DATUM(1)) &&
+                PG_GETARG_DATUM(1),
+                (bool *) PG_GETARG_POINTER(4)) &&
             DatumGetBool(gbt_text_consistent(fcinfo)));
     }
     else

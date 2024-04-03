@@ -244,7 +244,7 @@ static ArrayType *get_cached_array_query(PG_FUNCTION_ARGS)
         cache->original_array = array;
         cache->filtered_array = array;
         fcinfo->flinfo->fn_extra = cache;
-        if (PG_HAS_OPCLASS_OPTIONS())
+        if (PG_HAS_OPCLASS_OPTIONS() && ArrayGetNItems(ARR_NDIM(cache->original_array), ARR_DIMS(cache->original_array)) > 1)
         {
             GbteGistOptions *options = (GbteGistOptions *)PG_GET_OPCLASS_OPTIONS();
             struct cached_part_info *part_bounds_info = get_part_bounds_info(entry->rel, options->attno);

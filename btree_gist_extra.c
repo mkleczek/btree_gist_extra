@@ -29,38 +29,8 @@ extern Datum gbt_text_consistent(PG_FUNCTION_ARGS);
 
 static Datum find_any(Datum elem, ArrayType *array, Oid colation, PGFunction compare);
 static Datum check_all(Datum elem, ArrayType *array, Oid colation, PGFunction compare);
-static Datum any_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy);
-static Datum all_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy);
-static Datum array_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent);
-static Datum text_consistent_and_matches_part_bounds(PG_FUNCTION_ARGS);
-
-static Datum
-CallerFInfoFunctionCall5(PGFunction func, FmgrInfo *flinfo, Oid collation, Datum arg1, Datum arg2, Datum arg3, Datum arg4, Datum arg5)
-{
-    LOCAL_FCINFO(fcinfo, 5);
-    Datum result;
-
-    InitFunctionCallInfoData(*fcinfo, flinfo, 5, collation, NULL, NULL);
-
-    fcinfo->args[0].value = arg1;
-    fcinfo->args[0].isnull = false;
-    fcinfo->args[1].value = arg2;
-    fcinfo->args[1].isnull = false;
-    fcinfo->args[2].value = arg3;
-    fcinfo->args[2].isnull = false;
-    fcinfo->args[3].value = arg4;
-    fcinfo->args[3].isnull = false;
-    fcinfo->args[4].value = arg5;
-    fcinfo->args[4].isnull = false;
-
-    result = (*func)(fcinfo);
-
-    /* Check for null result, since caller is clearly not expecting one */
-    if (fcinfo->isnull)
-        elog(ERROR, "function %p returned NULL", (void *)func);
-
-    return result;
-}
+static Datum any_consistent(PG_FUNCTION_ARGS);
+static Datum all_consistent(PG_FUNCTION_ARGS);
 
 typedef struct
 {
@@ -86,7 +56,19 @@ Datum gbte_text_all_eq_array(PG_FUNCTION_ARGS)
 
 Datum gbte_text_consistent(PG_FUNCTION_ARGS)
 {
-    return array_consistent(fcinfo, text_consistent_and_matches_part_bounds);
+    StrategyNumber strategy = (StrategyNumber)PG_GETARG_UINT16(2);
+    switch (strategy)
+    {
+    case GbtExtraAnyEqStrategyNumber:
+        return any_consistent(fcinfo);
+    case GbtExtraAllEqStrategyNumber:
+        return all_consistent(fcinfo);
+    default:
+        /*
+         * Do not bother to use any DirectFunctionCall macros
+         */
+        return gbt_text_consistent(fcinfo);
+    }
 }
 
 Datum gbte_options(PG_FUNCTION_ARGS)
@@ -134,74 +116,6 @@ Datum check_all(Datum elem, ArrayType *array, Oid colation, PGFunction compare)
 
     PG_RETURN_BOOL(found);
 }
-Datum any_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy)
-{
-    ArrayIterator it = array_create_iterator(DatumGetArrayTypeP(PG_GETARG_DATUM(1)), 0, NULL);
-    bool* recheck = (bool *) PG_GETARG_POINTER(4);
-    Datum next_array_elem;
-    bool is_null;
-    bool found = false;
-
-    *recheck = false;
-    while ((!found || *recheck) && array_iterate(it, &next_array_elem, &is_null))
-    {
-        found = (!is_null && DatumGetBool(CallerFInfoFunctionCall5(
-                                element_consistent,
-                                fcinfo->flinfo,
-                                PG_GET_COLLATION(),
-                                PG_GETARG_DATUM(0),
-                                next_array_elem,
-                                element_strategy,
-                                PG_GETARG_DATUM(3),
-                                PG_GETARG_DATUM(4)))) || found;
-    }
-
-    array_free_iterator(it);
-
-    PG_RETURN_BOOL(found);
-}
-
-Datum all_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent, int element_strategy)
-{
-    ArrayIterator it = array_create_iterator(DatumGetArrayTypeP(PG_GETARG_DATUM(1)), 0, NULL);
-    Datum next_array_elem;
-    bool is_null;
-    bool found = true;
-
-    while (found && array_iterate(it, &next_array_elem, &is_null))
-    {
-        found = !is_null && DatumGetBool(DirectFunctionCall5Coll(
-                                element_consistent,
-                                PG_GET_COLLATION(),
-                                PG_GETARG_DATUM(0),
-                                next_array_elem,
-                                element_strategy,
-                                PG_GETARG_DATUM(3),
-                                PG_GETARG_DATUM(4)));
-    }
-
-    array_free_iterator(it);
-
-    PG_RETURN_BOOL(found);
-}
-
-Datum array_consistent(PG_FUNCTION_ARGS, PGFunction element_consistent)
-{
-    StrategyNumber strategy = (StrategyNumber)PG_GETARG_UINT16(2);
-    switch (strategy)
-    {
-    case GbtExtraAnyEqStrategyNumber:
-        return any_consistent(fcinfo, element_consistent, BTEqualStrategyNumber);
-    case GbtExtraAllEqStrategyNumber:
-        return all_consistent(fcinfo, element_consistent, BTEqualStrategyNumber);
-    default:
-        /*
-         * Do not bother to use any DirectFunctionCall macros
-         */
-        return element_consistent(fcinfo);
-    }
-}
-
 struct part_bound_check_info
 {
     PartitionKey part_key;
@@ -214,75 +128,60 @@ struct cached_part_info
 {
     List *hash_part_infos; /* List of (struct part_bound_check_info*) */
 };
-
-static struct cached_part_info *get_part_bounds_info(FmgrInfo *flinfo, Relation index_rel, AttrNumber index_att_no)
+static struct cached_part_info *get_part_bounds_info(Relation index_rel, AttrNumber index_att_no)
 {
     struct cached_part_info *result;
+    AttrNumber key_att_no = index_rel->rd_index->indkey.values[index_att_no - 1];
 
     Assert(index_att_no > 0);
 
-    /* Initialize cached_part_info if necessary and save it in fn_extra */
-    if (!(flinfo->fn_extra))
+    result = palloc0(sizeof(struct cached_part_info));
+
+    /* We do not handle expression indexes (for now) */
+    if (key_att_no > 0)
     {
-        AttrNumber key_att_no = index_rel->rd_index->indkey.values[index_att_no - 1];
+        /* Find table indexed by index_rel */
+        Relation rel = RelationIdGetRelation(IndexGetRelation(index_rel->rd_id, false));
+        Assert(rel);
 
-        MemoryContext mctx = MemoryContextSwitchTo(flinfo->fn_mcxt);
-        result = palloc0(sizeof(struct cached_part_info));
-        flinfo->fn_extra = result;
-
-        /* We do not handle expression indexes (for now) */
-        if (key_att_no > 0)
+        /* Walk up through partition hierarchy */
+        while (rel->rd_rel->relispartition)
         {
-            /* Find table indexed by index_rel */
-            Relation rel = RelationIdGetRelation(IndexGetRelation(index_rel->rd_id, false));
-            Assert(rel);
+            /* Find the actual parent and partition descriptor */
+            Relation parent = RelationIdGetRelation(get_partition_parent(rel->rd_id, false));
+            PartitionKey part_key;
 
-            /* Walk up through partition hierarchy */
-            while (rel->rd_rel->relispartition)
+            Assert(parent);
+
+            part_key = RelationGetPartitionKey(parent);
+
+            Assert(part_key);
+
+            /* Append partition info for the right partition key */
+            if (part_key->partnatts == 1 && part_key->partattrs[0] == key_att_no)
             {
-                /* Find the actual parent and partition descriptor */
-                Relation parent = RelationIdGetRelation(get_partition_parent(rel->rd_id, false));
-                PartitionKey part_key;
-
-                Assert(parent);
-
-                part_key = RelationGetPartitionKey(parent);
-
-                Assert(part_key);
-
-                /* Append partition info for the right partition key */
-                if (part_key->partnatts == 1 && part_key->partattrs[0] == key_att_no)
+                /* We only handle hash partitions for now */
+                if (part_key->strategy == PARTITION_STRATEGY_HASH)
                 {
-                    /* We only handle hash partitions for now */
-                    if (part_key->strategy == PARTITION_STRATEGY_HASH)
-                    {
-                        struct part_bound_check_info *hash_part_info = palloc(sizeof(struct part_bound_check_info));
-                        hash_part_info->part_key = part_key;
-                        hash_part_info->part_desc = RelationGetPartitionDesc(parent, false);
-                        hash_part_info->expected_part_oid = rel->rd_id;
+                    struct part_bound_check_info *hash_part_info = palloc(sizeof(struct part_bound_check_info));
+                    hash_part_info->part_key = part_key;
+                    hash_part_info->part_desc = RelationGetPartitionDesc(parent, false);
+                    hash_part_info->expected_part_oid = rel->rd_id;
 
-                        result->hash_part_infos = lappend(result->hash_part_infos, hash_part_info);
-                    }
+                    result->hash_part_infos = lappend(result->hash_part_infos, hash_part_info);
                 }
-
-                RelationClose(rel);
-                rel = parent;
             }
 
-            /* rel points to the root of partition hierarchy */
             RelationClose(rel);
+            rel = parent;
         }
 
-        MemoryContextSwitchTo(mctx);
-    }
-    else
-    {
-        result = (struct cached_part_info *)flinfo->fn_extra;
+        /* rel points to the root of partition hierarchy */
+        RelationClose(rel);
     }
 
     return result;
 }
-
 /* Macros copied from master - will be available in 17  - for now define them here*/
 #define foreach_ptr(type, var, lst) foreach_internal(type, *, var, lst, lfirst)
 
@@ -296,34 +195,31 @@ static struct cached_part_info *get_part_bounds_info(FmgrInfo *flinfo, Relation 
               (var = func(&var##__state.l->elements[var##__state.i]), true)); \
              var##__state.i++)
 
-static bool value_part_bounds_consistent(FmgrInfo *flinfo, Relation index_rel, AttrNumber index_att_no, Datum value, bool* recheck)
+static bool value_part_bounds_consistent(struct cached_part_info *part_bounds_info, Datum value)
 {
-    if (index_att_no > 0)
+    bool value_null = false;
+
+    Assert(part_bounds_info);
+
+    /* Check hash partitions */
+    foreach_ptr(struct part_bound_check_info, part_info, part_bounds_info->hash_part_infos)
     {
-        struct cached_part_info *part_bounds_info = get_part_bounds_info(flinfo, index_rel, index_att_no);
-        bool value_null = false;
+        PartitionBoundInfo boundinfo = part_info->part_desc->boundinfo;
+        uint64 hash;
+        int idx;
 
-        /* Check hash partitions */
-        foreach_ptr(struct part_bound_check_info, part_info, part_bounds_info->hash_part_infos)
+        /* Only a single Datum is checked. We can only handle single attribute partition keys */
+        Assert(part_info->part_key->partnatts == 1);
+        hash = compute_partition_hash_value(
+            1,
+            part_info->part_key->partsupfunc,
+            part_info->part_key->partcollation,
+            &value, &value_null);
+        idx = boundinfo->indexes[hash % boundinfo->nindexes];
+        if (idx >= 0 && part_info->part_desc->oids[idx] != part_info->expected_part_oid)
         {
-            PartitionBoundInfo boundinfo = part_info->part_desc->boundinfo;
-            uint64 hash;
-            int idx;
-
-            /* Only a single Datum is checked. We can only handle single attribute partition keys */
-            Assert(part_info->part_key->partnatts == 1);
-            hash = compute_partition_hash_value(
-                1,
-                part_info->part_key->partsupfunc,
-                part_info->part_key->partcollation,
-                &value, &value_null);
-            idx = boundinfo->indexes[hash % boundinfo->nindexes];
-            if (idx >= 0 && part_info->part_desc->oids[idx] != part_info->expected_part_oid)
-            {
-                *recheck = false;
-                /* The value is in another partition so we can safely exclude it */
-                return false;
-            }
+            /* The value is in another partition so we can safely exclude it */
+            return false;
         }
     }
 
@@ -331,25 +227,97 @@ static bool value_part_bounds_consistent(FmgrInfo *flinfo, Relation index_rel, A
     return true;
 }
 
-Datum text_consistent_and_matches_part_bounds(PG_FUNCTION_ARGS)
+struct filtered_array_cache
 {
-    if (PG_HAS_OPCLASS_OPTIONS())
-    {
-        GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
-        GbteGistOptions *options = (GbteGistOptions *)PG_GET_OPCLASS_OPTIONS();
+    ArrayType *original_array;
+    ArrayType *filtered_array;
+};
 
-        /* FIXME Save/restore fn_extra */
-        PG_RETURN_BOOL(
-            value_part_bounds_consistent(
-                fcinfo->flinfo,
-                entry->rel,
-                options->attno,
-                PG_GETARG_DATUM(1),
-                (bool *) PG_GETARG_POINTER(4)) &&
-            DatumGetBool(gbt_text_consistent(fcinfo)));
-    }
-    else
+static ArrayType *get_cached_array_query(PG_FUNCTION_ARGS)
+{
+    GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
+    ArrayType *array = DatumGetArrayTypeP(PG_GETARG_DATUM(1));
+    struct filtered_array_cache *cache = (struct filtered_array_cache *)fcinfo->flinfo->fn_extra;
+    if (!cache || cache->original_array != array)
     {
-        return gbt_text_consistent(fcinfo);
+        cache = MemoryContextAlloc(fcinfo->flinfo->fn_mcxt, sizeof(struct filtered_array_cache));
+        cache->original_array = array;
+        cache->filtered_array = array;
+        fcinfo->flinfo->fn_extra = cache;
+        if (PG_HAS_OPCLASS_OPTIONS())
+        {
+            GbteGistOptions *options = (GbteGistOptions *)PG_GET_OPCLASS_OPTIONS();
+            struct cached_part_info *part_bounds_info = get_part_bounds_info(entry->rel, options->attno);
+            ArrayBuildState *build_state = initArrayResult(array->elemtype, fcinfo->flinfo->fn_mcxt, true);
+            ArrayIterator it = array_create_iterator(array, 0, NULL);
+            Datum next_array_elem;
+            bool is_null;
+
+            while (array_iterate(it, &next_array_elem, &is_null))
+            {
+                if (!is_null && value_part_bounds_consistent(part_bounds_info, next_array_elem))
+                {
+                    build_state = accumArrayResult(build_state, next_array_elem, false, array->elemtype, fcinfo->flinfo->fn_mcxt);
+                }
+            }
+            cache->filtered_array = DatumGetArrayTypeP(makeArrayResult(build_state, fcinfo->flinfo->fn_mcxt));
+
+            // elog(NOTICE, "Elems original: %d", ArrayGetNItems( ARR_NDIM(cache->original_array), ARR_DIMS(cache->original_array)));
+            // elog(NOTICE, "Elems filtered: %d", ArrayGetNItems( ARR_NDIM(cache->filtered_array), ARR_DIMS(cache->filtered_array)));
+        }
     }
+
+    return cache->filtered_array;
+}
+
+Datum any_consistent(PG_FUNCTION_ARGS)
+{
+    ArrayType *array = get_cached_array_query(fcinfo);
+    ArrayIterator it = array_create_iterator(array, 0, NULL);
+    bool *recheck = (bool *)PG_GETARG_POINTER(4);
+    Datum next_array_elem;
+    bool is_null;
+    bool found = false;
+
+    *recheck = false;
+    while ((!found || *recheck) && array_iterate(it, &next_array_elem, &is_null))
+    {
+        found = (!is_null && DatumGetBool(DirectFunctionCall5Coll(
+                                 gbt_text_consistent,
+                                 PG_GET_COLLATION(),
+                                 PG_GETARG_DATUM(0),
+                                 next_array_elem,
+                                 BTEqualStrategyNumber,
+                                 PG_GETARG_DATUM(3),
+                                 PG_GETARG_DATUM(4)))) ||
+                found;
+    }
+
+    array_free_iterator(it);
+
+    PG_RETURN_BOOL(found);
+}
+
+Datum all_consistent(PG_FUNCTION_ARGS)
+{
+    ArrayIterator it = array_create_iterator(DatumGetArrayTypeP(PG_GETARG_DATUM(1)), 0, NULL);
+    Datum next_array_elem;
+    bool is_null;
+    bool found = true;
+
+    while (found && array_iterate(it, &next_array_elem, &is_null))
+    {
+        found = !is_null && DatumGetBool(DirectFunctionCall5Coll(
+                                gbt_text_consistent,
+                                PG_GET_COLLATION(),
+                                PG_GETARG_DATUM(0),
+                                next_array_elem,
+                                BTEqualStrategyNumber,
+                                PG_GETARG_DATUM(3),
+                                PG_GETARG_DATUM(4)));
+    }
+
+    array_free_iterator(it);
+
+    PG_RETURN_BOOL(found);
 }
